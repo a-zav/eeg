@@ -71,12 +71,7 @@ def classify_trial_model(epochs, labels):
     # load optimal weights
     model.load_weights(checkpoint_file)
 
-    # make prediction on test set
-    class_probabilities = model.predict(X_test)
-    test_accuracy = util.calc_accuracy_from_prob(class_probabilities, Y_test)
-    print("Classification accuracy on the test set: %f " % test_accuracy)
-    
-    return model
+    return model, X_test, Y_test
 
 
 def choose_layer(state: State, rng) -> Layer:

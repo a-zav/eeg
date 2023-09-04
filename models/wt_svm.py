@@ -88,9 +88,4 @@ def classify_wt_svm(epochs, labels):
     # train the model
     model = classifier.fit(X_train, Y_train)
 
-    # make prediction on test set
-    predictions = model.predict(X_test)
-    test_accuracy = util.calc_accuracy(predictions, Y_test)
-    print("Classification accuracy on the test set: %f " % test_accuracy)
-    
-    return model
+    return model, X_test, Y_test

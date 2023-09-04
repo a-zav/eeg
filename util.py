@@ -5,14 +5,15 @@
 
 import os
 import numpy as np
-import matplotlib.pyplot as plt
 
 from typing import List, Optional
 from mne.channels import make_standard_montage
 from mne.io import concatenate_raws, read_raw_edf
 from mne.datasets import eegbci
 from tensorflow.keras import utils as np_utils
-from sklearn.metrics import confusion_matrix
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.metrics import confusion_matrix, classification_report,\
+    ConfusionMatrixDisplay
 
 
 DATASET_DIR = os.path.dirname(os.path.realpath(__file__)) + '/../physionet_mi_dataset'
@@ -38,11 +39,15 @@ def load_data(subjects: list, runs: Optional[List] = None):
     return raw
 
 
-def split_data(epochs, labels):
+def split_data(epochs, labels, scale=None):
     '''
       The following implementation uses fragments of code from
       https://github.com/vlawhern/arl-eegmodels/blob/master/EEGModels.py
-      
+
+      'scale' is one of: None (no scaling), "factor" (input data values will
+      be multiplied by 1000), "range" (input data will be scaled to have values
+      between -1 and 1).
+
       Returns a tuple of (X_train, Y_train, X_validate, Y_validate, X_test, Y_test)
     '''
 
@@ -51,10 +56,20 @@ def split_data(epochs, labels):
 
     indices = np.random.permutation(total_count)
 
-    # Scaling raw data by 1000 is suggested at
-    # https://github.com/vlawhern/arl-eegmodels/blob/master/EEGModels.py
-    # to account for scaling sensitivity in deep learning.
-    X = np.array([epochs.get_data()[i] * 1000  for i in indices])
+    if scale == 'factor':
+        # Scaling raw data by 1000 is suggested at
+        # https://github.com/vlawhern/arl-eegmodels/blob/master/EEGModels.py
+        # to account for scaling sensitivity in deep learning.
+        X = np.array([epochs.get_data()[i] * 1000  for i in indices])
+    elif scale == 'range':
+        X = np.array([epochs.get_data()[i] for i in indices])
+        original_shape = X.shape
+        scaler = MinMaxScaler(feature_range=(-1, 1))
+        X = scaler.fit_transform(X.reshape(original_shape[0], -1))\
+            .reshape(original_shape)
+    else:
+        X = np.array([epochs.get_data()[i] for i in indices])
+
     y = [labels[i] for i in indices]
 
     # Split the data into train (50%)/validate (25%)/test (25%).
@@ -120,14 +135,26 @@ def calc_class_weights(labels) -> dict:
     return class_weights
 
 
-def calc_accuracy_from_prob(class_probabilities, labels):
+def calc_accuracy_from_prob(class_probabilities, labels, class_names=None):
     predictions = class_probabilities.argmax(axis = -1)
-    print(confusion_matrix(labels.argmax(axis=-1), predictions))
-    plt.matshow(confusion_matrix(labels.argmax(axis=-1), predictions))
+    true_classes = labels.argmax(axis=-1)
+
+    cm = confusion_matrix(true_classes, predictions)
+    print("Confusion matrix:", cm)
+
+    cmd = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=class_names)
+    cmd.plot()
+
+    print(classification_report(true_classes, predictions, target_names=class_names))
     return np.mean(predictions == labels.argmax(axis=-1))
 
 
-def calc_accuracy(predictions, labels):
-    print(confusion_matrix(labels, predictions))
-    plt.matshow(confusion_matrix(labels, predictions))
+def calc_accuracy(predictions, labels, class_names=None):
+    cm = confusion_matrix(labels, predictions)
+    print("Confusion matrix:", cm)
+
+    cmd = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=class_names)
+    cmd.plot()
+
+    print(classification_report(labels, predictions, target_names=class_names))
     return np.mean(predictions == labels)

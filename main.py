@@ -14,7 +14,7 @@ from models.wt_svm import classify_wt_svm
 from models.trial_model import classify_trial_model
 from models.rnn import classify_rnn
 from models.EEGNet_LSTM import classify_EEGNet_LSTM
-from numpy import random as np_random
+from numpy import random as np_random, amin as np_amin
 from streaming import classify_from_stream
 from tensorflow import random as tf_random, config as tf_config
 
@@ -28,9 +28,25 @@ mne_utils.set_config('MNE_USE_CUDA', 'true')
 print(f"GPUs: {tf_config.list_physical_devices('GPU')}")
 
 
+def get_class_names(number_of_classes, task) -> list:
+    if number_of_classes <= 3:
+        class_names = [] if number_of_classes == 2 else ['Rest']
+        class_names += ['Fists', 'Feet'] if task == TASK_HANDS_VS_FEET \
+            else ['Left fist', 'Right fist']
+    else:
+        class_names = [] if number_of_classes == 4 else ['Rest']
+        class_names += ['Both fists', 'Both feet', 'Left fist', 'Right fist']
+
+    return class_names
+
+
 def main():
     # one of: 'WT_SVM', 'LDA', 'RNN', 'EEGNet', 'EEGNet_LSTM', 'TRIAL'
-    model_to_train = 'LDA'
+    #model_to_train = 'WT_SVM'
+    #model_to_train = 'RNN'
+    #model_to_train = 'EEGNet'
+    model_to_train = 'EEGNet_LSTM'
+    #model_to_train = 'LDA'
 
     # 2 classes: hands vs feet or left vs right
     # 3 classes: hands vs feet or left vs right plus rest
@@ -92,17 +108,22 @@ def main():
     mi_left_vs_right_fist_runs = [4, 8, 12]  # task 2
     mi_hands_vs_feet_runs = [6, 10, 14]  # task 4
 
-    # for testing    
+    # for testing
+    #included_subjects = [1] #, 2, 3]
     #included_subjects = [1, 2, 3, 4, 5]
 
-    tmin, tmax = 0.0, 3.0  #0.5  # take 0.5 seconds after the event onset
+    tmin, tmax = 0.0, 3.0  #0.5  # take 0.5 or 3 seconds after the event onset
 
     if number_of_classes > 3 or task == TASK_HANDS_VS_FEET:
         eeg_data_hands_vs_feet = util.load_data(subjects=included_subjects,
                                                 runs=mi_hands_vs_feet_runs)
 
+        events_hands_vs_feet_annotated = dict(T1=1, T2=2)
+        if number_of_classes == 3 or number_of_classes == 5:
+            events_hands_vs_feet_annotated['T0'] = 0
+
         events_hands_vs_feet, _ = events_from_annotations(
-            eeg_data_hands_vs_feet, event_id=dict(T0=0, T1=1, T2=2))
+            eeg_data_hands_vs_feet, event_id=events_hands_vs_feet_annotated)
 
         picks_hands_vs_feet = pick_types(eeg_data_hands_vs_feet.info, meg=False,
                                          eeg=True, stim=False, eog=False, exclude="bads")
@@ -113,7 +134,7 @@ def main():
         #for i in range(0, 64):
         #    plt.plot(np.arange(0, duration_sec, 1.0/160.0),
         #             eeg_data_hands_vs_feet.get_data()[i][:160 * duration_sec])
-        
+
         
         if model_to_train == 'LDA':
             # apply band-pass filter, see
@@ -146,8 +167,12 @@ def main():
             eeg_data_hands_vs_feet.filter(1.0, 40.0, fir_design="firwin",
                                           skip_by_annotation="edge")
 
+        event_id_left_vs_right_annotated = dict(T1=3, T2=4)
+        if number_of_classes == 3 or number_of_classes == 5:
+            event_id_left_vs_right_annotated['T0'] = 0
+
         events_left_vs_right, _ = events_from_annotations(
-            eeg_data_left_vs_right, event_id=dict(T0=0, T1=3, T2=4))
+            eeg_data_left_vs_right, event_id=event_id_left_vs_right_annotated)
 
         picks_left_vs_right = pick_types(eeg_data_hands_vs_feet.info, meg=False,
                                          eeg=True, stim=False, eog=False, exclude="bads")
@@ -156,7 +181,7 @@ def main():
         event_id_left_vs_right = dict(left_fist=3, right_fist=4)
         if number_of_classes == 3 or number_of_classes == 5:
             event_id_left_vs_right['rest'] = 0
-        
+
         epochs_left_vs_right = Epochs(
             eeg_data_left_vs_right,
             events_left_vs_right,
@@ -176,15 +201,17 @@ def main():
             else epochs_left_vs_right
 
     labels = epochs.events[:, -1]
-    
-    # Baseline model
-    # 102 subjects, task 4: cross-validation classification accuracy:
-    #    0.548257 / Chance level: 0.500436
-    # 102 subjects, 5 classes: 
-    #    Cross-validation accuracy: 0.414990
-    #    Classification accuracy on the test set: 0.42737
+    labels -= np_amin(labels)
+
+    X_test = None
     if model_to_train == 'WT_SVM':
-        model = classify_wt_svm(epochs, labels)
+        # Baseline model
+        # 102 subjects, task 4: cross-validation classification accuracy:
+        #    0.548257 / Chance level: 0.500436
+        # 102 subjects, 5 classes:
+        #    Cross-validation accuracy: 0.414990
+        #    Classification accuracy on the test set: 0.42737
+        model, X_test, Y_test = classify_wt_svm(epochs, labels)
     elif model_to_train == 'LDA':
         # 2 classes, hands vs feet:
         # Classification accuracy: 0.585621 / Chance level: 0.500436
@@ -196,19 +223,35 @@ def main():
         #     Classification accuracy: 0.715157
         # 0-3s blocks: Classification accuracy: 0.713415
         # 0-0.5s, 5 classes: Classification accuracy: 0.596296
-        model = classify_EEGNet(epochs, labels)
+        model, X_test, Y_test = classify_EEGNet(epochs, labels)
     elif model_to_train == 'RNN':
         # Classification accuracy on the test set: 0.543355
-        model = classify_rnn(epochs, labels)
+        model, X_test, Y_test = classify_rnn(epochs, labels)
     elif model_to_train == 'EEGNet_LSTM':
         # Classification accuracy on the test set: 0.631155
-        model = classify_EEGNet_LSTM(epochs, labels)
+        model, X_test, Y_test = classify_EEGNet_LSTM(epochs, labels)
     elif model_to_train == 'TRIAL':
-        model = classify_trial_model(epochs, labels)
+        model, X_test, Y_test = classify_trial_model(epochs, labels)
     else:
         raise Exception(f"Unknown model name '{model}'.")
 
-    
+
+    if X_test is not None:
+        # make prediction on test set and report performance metrics
+        predictions = model.predict(X_test)
+        class_names = get_class_names(number_of_classes, task)
+        if len(Y_test.shape) == 1:
+            # Y_test contains numeric class labels, e.g., 0,1,2,3
+            test_accuracy = util.calc_accuracy(predictions, Y_test, class_names)
+        else:
+            # Y_test contains one-hot encoded labels and predictions -
+            # the probability of each class
+            test_accuracy = util.calc_accuracy_from_prob(predictions,
+                                                         Y_test, class_names)
+
+        print("Classification accuracy on the test set: %f " % test_accuracy)
+
+
     ###                               ###
     ### Test models in streaming mode ###
     ###                               ###

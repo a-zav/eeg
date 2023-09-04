@@ -13,21 +13,22 @@ import util
 
 
 def classify_EEGNet(epochs, labels):
+    number_of_classes = len(np.unique(labels))
+
     # saving in the native format ("checkpoint.keras") produces weird errors
     # hence ".h5"
-    checkpoint_file = f'{util.CHECKPOINT_DIR}/EEGNet_checkpoint.h5'
+    checkpoint_file = \
+        f'{util.CHECKPOINT_DIR}/EEGNet_{number_of_classes}_classes.h5'
 
     X = epochs.get_data()
 
     X_train, Y_train, X_validate, Y_validate, X_test, Y_test =\
-        util.split_data(epochs, labels)
+        util.split_data(epochs, labels, scale="factor")
   
     # reshape input data to (trials, channels, samples, kernels=1)
     channels, samples, kernels = 64, np.shape(X)[2], 1
     X_train, X_validate, X_test = util.convert_to_nhwc(
         X_train, X_validate, X_test, channels, samples, kernels)
-
-    number_of_classes = len(np.unique(labels))
 
     # EEGNet-4,2 model
     model = EEGNet(nb_classes = number_of_classes, Chans = channels,
@@ -43,6 +44,7 @@ def classify_EEGNet(epochs, labels):
     checkpointer = ModelCheckpoint(filepath=checkpoint_file,
                                   verbose=1, save_best_only=True)
 
+    # comment out to use pre-trained weights
     model.fit(X_train, Y_train, batch_size = 16, epochs = 150,
               verbose = 2, validation_data = (X_validate, Y_validate),
               callbacks=[checkpointer],
@@ -51,9 +53,4 @@ def classify_EEGNet(epochs, labels):
     # load optimal weights
     model.load_weights(checkpoint_file)
 
-    # make prediction on test set
-    class_probabilities = model.predict(X_test)
-    test_accuracy = util.calc_accuracy_from_prob(class_probabilities, Y_test)
-    print("Classification accuracy on the test set: %f " % test_accuracy)
-
-    return model
+    return model, X_test, Y_test

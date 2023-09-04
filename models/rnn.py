@@ -20,15 +20,15 @@ from sklearn.preprocessing import FunctionTransformer
 from tensorflow.keras.callbacks import ModelCheckpoint
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Input, Dense, Activation, Dropout, \
-    Flatten, GRU
+    GRU
 
 import util
 
 
 def classify_rnn(epochs, labels):
-    checkpoint_file = f'{util.CHECKPOINT_DIR}/rnn_checkpoint.h5'
-
     number_of_classes = len(np.unique(labels))
+
+    checkpoint_file = f'{util.CHECKPOINT_DIR}/rnn_{number_of_classes}_classes.h5'
 
     #X = epochs.get_data()
     #X_train, X_test, Y_train, Y_test = train_test_split(X, labels, test_size=0.3)
@@ -68,7 +68,7 @@ def classify_rnn(epochs, labels):
     test_accuracy = util.calc_accuracy_from_prob(class_probabilities, Y_test)
     print("Classification accuracy on the test set: %f " % test_accuracy)
     
-    return model
+    return model, X_test, Y_test
 
 #
 # GRU (in: 32 dimensions, out: 32 dimensions) -> Dropout (0.5) ->

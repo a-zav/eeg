@@ -3,7 +3,9 @@
   The driver program.
 """
 
+import os
 import random
+import numpy as np
 #from matplotlib import pyplot as plt
 from mne import Epochs, pick_types, events_from_annotations,\
     concatenate_epochs, utils as mne_utils
@@ -14,9 +16,10 @@ from models.wt_svm import classify_wt_svm
 from models.trial_model import classify_trial_model
 from models.rnn import classify_rnn
 from models.EEGNet_LSTM import classify_EEGNet_LSTM
-from numpy import random as np_random, amin as np_amin
+
 from streaming import classify_from_stream
-from tensorflow import random as tf_random, config as tf_config
+from tensorflow import config as tf_config
+from tensorflow.keras.utils import set_random_seed
 
 import util
 
@@ -52,18 +55,19 @@ def main():
     # 3 classes: hands vs feet or left vs right plus rest
     # 4 classes: hands vs feet vs left vs right
     # 5 classes: hands vs feet vs left vs right plus rest
-    number_of_classes = 2
+    number_of_classes = 3
     # used when number_of_classes is 2 or 3
-    task = TASK_HANDS_VS_FEET
-    #task = TASK_LEFT_VS_RIGHT
-    
+    #task = TASK_HANDS_VS_FEET
+    task = TASK_LEFT_VS_RIGHT
+
     evaluate_in_streaming_mode = False
 
-    # for reproducibility
+    # the following will not help to get reproducible results for Keras models
+    # when training on GPU...
     seed = 1
-    tf_random.set_seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    set_random_seed(seed)
     rng = random.Random(seed)
-    np_random.seed(seed)
 
     #
     # https://www.physionet.org/content/eegmmidb/1.0.0/
@@ -105,14 +109,17 @@ def main():
     print(f'Will leave subject {left_out_subject} out for testing')
     included_subjects.remove(left_out_subject)
     
-    mi_left_vs_right_fist_runs = [4, 8, 12]  # task 2
+    mi_left_vs_right_runs = [4, 8, 12]  # task 2
     mi_hands_vs_feet_runs = [6, 10, 14]  # task 4
 
     # for testing
     #included_subjects = [1] #, 2, 3]
     #included_subjects = [1, 2, 3, 4, 5]
 
-    tmin, tmax = 0.0, 3.0  #0.5  # take 0.5 or 3 seconds after the event onset
+    # The number of seconds to take before and after the event onset.
+    # The models were evaluated using tmax = 0.5 and 3.0 (3.3 for EEGNet_LSTM)
+    tmin, tmax = 0.0, 0.5
+    #tmin, tmax = 0.0, 3.0
 
     if number_of_classes > 3 or task == TASK_HANDS_VS_FEET:
         eeg_data_hands_vs_feet = util.load_data(subjects=included_subjects,
@@ -160,11 +167,11 @@ def main():
 
     if number_of_classes > 3 or task == TASK_LEFT_VS_RIGHT:
         eeg_data_left_vs_right = util.load_data(subjects=included_subjects,
-                                                runs=mi_left_vs_right_fist_runs)    
+                                                runs=mi_left_vs_right_runs)
         if model_to_train == 'LDA':
             # apply band-pass filter, see
             # https://mne.tools/dev/auto_examples/decoding/decoding_csp_eeg.html
-            eeg_data_hands_vs_feet.filter(1.0, 40.0, fir_design="firwin",
+            eeg_data_left_vs_right.filter(1.0, 40.0, fir_design="firwin",
                                           skip_by_annotation="edge")
 
         event_id_left_vs_right_annotated = dict(T1=3, T2=4)
@@ -174,7 +181,7 @@ def main():
         events_left_vs_right, _ = events_from_annotations(
             eeg_data_left_vs_right, event_id=event_id_left_vs_right_annotated)
 
-        picks_left_vs_right = pick_types(eeg_data_hands_vs_feet.info, meg=False,
+        picks_left_vs_right = pick_types(eeg_data_left_vs_right.info, meg=False,
                                          eeg=True, stim=False, eog=False, exclude="bads")
     
     
@@ -201,7 +208,12 @@ def main():
             else epochs_left_vs_right
 
     labels = epochs.events[:, -1]
-    labels -= np_amin(labels)
+    if number_of_classes == 3 and task == TASK_LEFT_VS_RIGHT:
+        # translate class labels (0, 3, 4) to (0, 1, 2)
+        labels -= 2
+        labels = np.clip(labels, 0, 2)
+    else:
+        labels -= np.amin(labels)
 
     X_test = None
     if model_to_train == 'WT_SVM':

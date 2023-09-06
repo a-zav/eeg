@@ -16,7 +16,11 @@ from sklearn.metrics import confusion_matrix, classification_report,\
     ConfusionMatrixDisplay
 
 
+# MNE loader uses the following directory structure:
+#DATASET_DIR = os.path.dirname(os.path.realpath(__file__)) +\
+#    '/../physionet_mi_dataset/MNE-eegbci-data/files/eegmmidb/1.0.0'
 DATASET_DIR = os.path.dirname(os.path.realpath(__file__)) + '/../physionet_mi_dataset'
+
 CHECKPOINT_DIR = os.path.dirname(os.path.realpath(__file__)) + '/../checkpoints'
 
 

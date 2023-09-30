@@ -105,7 +105,7 @@ def create_model(input_data_shape, number_of_classes):
 
     l2_regularizer = regularizers.L2(0.2)
 
-    reshape  = Reshape((32, -1))(block2)
+    reshape  = Reshape((block2.shape[1] * block2.shape[2], -1))(block2)
     lstm1    = LSTM(32, return_sequences=True)(reshape)
     norm1    = BatchNormalization()(lstm1)
     dropout1 = Dropout(dropoutRate)(norm1)

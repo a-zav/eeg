@@ -49,9 +49,9 @@ def main():
     #model_to_train = 'WT_SVM'
     #model_to_train = 'RNN'
     #model_to_train = 'EEGNet'
-    #model_to_train = 'EEGNet_LSTM'
+    model_to_train = 'EEGNet_LSTM'
     #model_to_train = 'CSP_LDA'
-    model_to_train = 'TRIAL'
+    #model_to_train = 'TRIAL'
     #model_to_train = 'NEW'
 
     # 2 classes: hands vs feet or left vs right
@@ -120,9 +120,9 @@ def main():
     #included_subjects = range(1, 25)
 
     # The number of seconds to take before and after the event onset.
-    # The models were evaluated using tmax = 0.5 and 3.0 (3.3 for EEGNet_LSTM)
-    tmin, tmax = 0.0, 0.5
-    #tmin, tmax = 0.0, 3.0
+    # The models were evaluated using tmax = 0.5 and 3.0
+    #tmin, tmax = 0.0, 0.5
+    tmin, tmax = 0.0, 3.0
 
     if number_of_classes > 3 or task == TASK_HANDS_VS_FEET:
         eeg_data_hands_vs_feet = util.load_data(subjects=included_subjects,

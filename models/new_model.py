@@ -6,15 +6,14 @@
 import numpy as np
 from typing import NamedTuple
 
+from tensorflow.keras.activations import swish
 from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping, TensorBoard
-from tensorflow.keras.constraints import max_norm
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Input, Dense, Reshape, Activation,\
     Dropout, Conv1D, Conv2D, AveragePooling2D, DepthwiseConv2D, SeparableConv1D,\
-    SeparableConv2D, BatchNormalization, LSTM, Flatten, Add, ReLU, MultiHeadAttention,\
+    SeparableConv2D, BatchNormalization, Flatten, Add, ReLU, MultiHeadAttention,\
     LayerNormalization, DepthwiseConv1D, Reshape, MaxPooling2D
-from tensorflow.keras.activations import swish
-from keras.optimizers import Adam, AdamW, SGD
+from keras.optimizers import Adam
 from keras import regularizers
 
 import util
@@ -51,9 +50,9 @@ def classify_new_model(epochs, labels):
 
     hp = Hyperparameters(
         conv0_filters=4,
-        pooling_type="none",
+        pooling_type="avg",
         pooling_kernel_h=8,
-        dense1_units=32,
+        dense1_units=24,
         conv1_filters=1,
         depthwise_conv1_kernel=1,
         attention_heads=2,
@@ -67,7 +66,6 @@ def classify_new_model(epochs, labels):
     # compile the model and set the optimizers
     model.compile(loss='categorical_crossentropy',
                   optimizer=Adam(learning_rate=0.001),
-#                  optimizer=SGD(learning_rate=0.01, momentum=0.001, nesterov=True),
                   metrics=['accuracy'])
 
     checkpointer = ModelCheckpoint(filepath = checkpoint_file,
@@ -146,19 +144,42 @@ def create_conformer_block(last_layer, hp: Hyperparameters):
     residual1 = Add()([last_layer, ff_block * hp.residual_fraction])
 #    residual1 = ReLU()(residual1)
 #    residual1 = Reshape((8, 4))(residual1)
-    residual1 = Reshape((8, -1))(residual1)
+
+    n = residual1.shape[1]
+    width = 1
+
+    while n > width and (n % 2 == 0 or n % 3 == 0):
+        if n % 2 == 0:
+            width *= 2
+            n = n // 2
+        else:
+            width *= 3
+            n = n // 3
+
+    if width == 1:
+        width = residual1.shape[1]
+
+    residual1 = Reshape((width, -1))(residual1)
 
     print(f'residual1.shape = {residual1.shape}')
     if hp.attention_heads > 0:
+        lnorm1 = LayerNormalization(axis=[1, 2])(residual1)
+
+        n_features = residual1.shape[2]
+        key_dim = n_features // hp.attention_heads
+        print(f'key_dim = {key_dim}')
+        if key_dim == 0:
+            key_dim = n_features
+
         attn1 = MultiHeadAttention(
-            num_heads=hp.attention_heads, key_dim=2)(residual1, residual1)
-        print(f'attn1.shape = {attn1.shape}')
-    
-        residual2 = Add()([residual1, attn1])
+            num_heads=hp.attention_heads, key_dim=key_dim)(lnorm1, lnorm1)
+
+        dropout1 = Dropout(hp.dropout_rate)(attn1)
+        residual2 = Add()([residual1, dropout1])
     else:
         residual2 = residual1
 
-    residual2 = Reshape((8, -1, 1))(residual2)
+    residual2 = Reshape((width, -1, 1))(residual2)
     conv1 = create_conv_layer(residual2, hp)
     print(f'conv1.shape = {conv1.shape}')
 
@@ -168,10 +189,8 @@ def create_conformer_block(last_layer, hp: Hyperparameters):
     print(f'ff_block2.shape = {ff_block2.shape}')
 
     residual4 = Add()([residual3, ff_block2 * hp.residual_fraction])
-    print(f'residual2.shape = {residual2.shape}')
-    lnorm1 = LayerNormalization(axis=1)(residual4)
-    flatten1 = Flatten()(lnorm1)
-    print(f'flatten1.shape = {flatten1.shape}')
+    lnorm2 = LayerNormalization(axis=1)(residual4)
+    flatten1 = Flatten()(lnorm2)
 
     return flatten1
     
@@ -216,16 +235,17 @@ def create_model(channels, samples, number_of_classes, hp: Hyperparameters):
 def build_trial_model(hp, channels, samples, number_of_classes):
 
     selected_hp = Hyperparameters(
-        conv0_filters=hp.Choice('conv0_filters', values=[0, 2, 4, 8]),
-        pooling_type=hp.Choice('pooling_type', values=["max", "avg", "none"]),
-        pooling_kernel_h=hp.Choice('pooling_kernel_h', values=[2, 4, 8, 16, 32, 64]),
-        dense1_units=hp.Int('dense1_units', min_value=8, max_value=32, step=4),
-        conv1_filters=hp.Choice('conv1_filters', values=[1, 2, 4, 8]),
-        depthwise_conv1_kernel=hp.Int('depthwise_conv1_kernel', min_value=1, max_value=16, step=1),
-        attention_heads=hp.Int('attention_heads', min_value=0, max_value=16, step=1),
-        residual_fraction=hp.Float('residual_fraction', 0, 1.0, step=0.1),
-        dropout_rate=hp.Float('dropout_rate', 0, 0.5, step=0.1),
-        l2_regularization=hp.Float('l2_regularization', 0, 0.3, step=0.1)
+        conv0_filters = hp.Choice('conv0_filters', values=[0, 2, 4, 8]),
+        pooling_type = hp.Choice('pooling_type', values=["max", "avg", "none"]),
+        pooling_kernel_h = hp.Choice('pooling_kernel_h', values=[2, 4, 8, 16, 32, 64]),
+        dense1_units = hp.Int('dense1_units', min_value=8, max_value=32, step=4),
+        conv1_filters = hp.Choice('conv1_filters', values=[1, 2, 4, 8]),
+        depthwise_conv1_kernel = \
+            hp.Int('depthwise_conv1_kernel', min_value=1, max_value=16, step=1),
+        attention_heads = hp.Int('attention_heads', min_value=0, max_value=16, step=1),
+        residual_fraction = hp.Float('residual_fraction', 0, 1.0, step=0.1),
+        dropout_rate = hp.Float('dropout_rate', 0, 0.5, step=0.1),
+        l2_regularization = hp.Float('l2_regularization', 0, 0.3, step=0.1)
     )
 
     model = create_model(channels, samples, number_of_classes, selected_hp)

@@ -6,14 +6,16 @@
 import numpy as np
 import keras_tuner as kt
 
-from functools import partial
 from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping, TensorBoard
-        
+from tensorflow.python.keras.utils import layer_utils
+
 from models.new_model import build_trial_model
 import util
 
 
 class TrialModel(kt.HyperModel):
+    MAX_PARAMETERS = 100000
+
     def __init__(self, channels, samples, number_of_classes):
         self.channels = channels
         self.samples = samples
@@ -21,7 +23,10 @@ class TrialModel(kt.HyperModel):
         self.batch_size = None
 
     def build(self, hp):
-        return build_trial_model(hp, self.channels, self.samples, self.number_of_classes)
+        model = build_trial_model(hp, self.channels, self.samples, self.number_of_classes)
+        if layer_utils.count_params(model.trainable_weights) > TrialModel.MAX_PARAMETERS:
+            raise Exception("The model has too many parameters")
+        return model
 
     def fit(self, hp, model, *args, **kwargs):
         self.batch_size = hp.Choice("batch_size", [16, 32, 64, 128, 256])
@@ -44,27 +49,24 @@ def find_best_model(epochs, labels):
     X_train, X_validate, X_test = util.convert_to_nhwc(
         X_train, X_validate, X_test, channels, samples, kernels)
 
-    # tuner = kt.BayesianOptimization(
-    #     partial(build_trial_model, channels=channels, samples=samples,
-    #             number_of_classes=number_of_classes),
-    #     objective='val_accuracy', max_trials=50)
-
     tuner = kt.Hyperband(
         TrialModel(channels=channels, samples=samples,
                     number_of_classes=number_of_classes),
         objective='val_accuracy',
         max_epochs=200,
-        max_consecutive_failed_trials=10,
+        max_consecutive_failed_trials=20,
         project_name="trial_model",
         overwrite=True
     )
 
+    # We can use RandomSearch instead of Hyperband:
+    #
     # tuner = kt.RandomSearch(
     #     TrialModel(channels=channels, samples=samples,
     #                number_of_classes=number_of_classes),
     #     objective='val_accuracy',
     #     max_trials=300,
-    #     max_consecutive_failed_trials=10,
+    #     max_consecutive_failed_trials=20,
     #     project_name="trial_model",
     #     overwrite=True
     # )
@@ -90,13 +92,6 @@ def find_best_model(epochs, labels):
                         validation_data=(X_validate, Y_validate),
                         class_weight=class_weights)
 
-    # history = model.fit(np.concatenate((X_train, X_validate)),
-    #                     np.concatenate((Y_train, Y_validate)),
-    #                     epochs=200,
-    #                     verbose=2,
-    #                     validation_split=0.2,
-    #                     class_weight=class_weights)
-
     val_accuracy_history = history.history['val_accuracy']
     best_epoch = val_accuracy_history.index(max(val_accuracy_history)) + 1
     print(f'Best epoch: {best_epoch}')
@@ -105,7 +100,6 @@ def find_best_model(epochs, labels):
                                    verbose = 1, save_best_only = True)
 
     model.fit(X_train, Y_train,
-              #batch_size=128,
               epochs=best_epoch,
               verbose=2,
               validation_data=(X_validate, Y_validate),

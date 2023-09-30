@@ -26,7 +26,7 @@ def classify_EEGNet(epochs, labels):
         util.split_data(epochs, labels, scale="factor")
   
     # reshape input data to (trials, channels, samples, kernels=1)
-    channels, samples, kernels = 64, np.shape(X)[2], 1
+    channels, samples, kernels = np.shape(X)[1], np.shape(X)[2], 1
     X_train, X_validate, X_test = util.convert_to_nhwc(
         X_train, X_validate, X_test, channels, samples, kernels)
 

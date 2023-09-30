@@ -6,16 +6,17 @@
 import os
 import random
 import numpy as np
-#from matplotlib import pyplot as plt
+
 from mne import Epochs, pick_types, events_from_annotations,\
     concatenate_epochs, utils as mne_utils
 from mne.io import concatenate_raws
 from models.EEGNet import classify_EEGNet
-from models.lda import classify_lda
+from models.csp_lda import classify_csp_lda
 from models.wt_svm import classify_wt_svm
-from models.trial_model import classify_trial_model
 from models.rnn import classify_rnn
 from models.EEGNet_LSTM import classify_EEGNet_LSTM
+from models.trial_model import find_best_model
+from models.new_model import classify_new_model
 
 from streaming import classify_from_stream
 from tensorflow import config as tf_config
@@ -44,21 +45,23 @@ def get_class_names(number_of_classes, task) -> list:
 
 
 def main():
-    # one of: 'WT_SVM', 'LDA', 'RNN', 'EEGNet', 'EEGNet_LSTM', 'TRIAL'
+    # one of: 'WT_SVM', 'CSP_LDA', 'RNN', 'EEGNet', 'EEGNet_LSTM', 'TRIAL', 'NEW'
     #model_to_train = 'WT_SVM'
     #model_to_train = 'RNN'
     #model_to_train = 'EEGNet'
-    model_to_train = 'EEGNet_LSTM'
-    #model_to_train = 'LDA'
+    #model_to_train = 'EEGNet_LSTM'
+    #model_to_train = 'CSP_LDA'
+    model_to_train = 'TRIAL'
+    #model_to_train = 'NEW'
 
     # 2 classes: hands vs feet or left vs right
     # 3 classes: hands vs feet or left vs right plus rest
     # 4 classes: hands vs feet vs left vs right
     # 5 classes: hands vs feet vs left vs right plus rest
-    number_of_classes = 3
+    number_of_classes = 2
     # used when number_of_classes is 2 or 3
-    #task = TASK_HANDS_VS_FEET
-    task = TASK_LEFT_VS_RIGHT
+    task = TASK_HANDS_VS_FEET
+    #task = TASK_LEFT_VS_RIGHT
 
     evaluate_in_streaming_mode = False
 
@@ -97,7 +100,7 @@ def main():
     #    the right fist (in runs 3, 4, 7, 8, 11, and 12)
     #    both feet (in runs 5, 6, 9, 10, 13, and 14)
     #
-    
+
     n_subjects = 109
 
     # Varsehi and Firoozabadi (2021) and Fan et al. (2021) claim that records
@@ -113,8 +116,8 @@ def main():
     mi_hands_vs_feet_runs = [6, 10, 14]  # task 4
 
     # for testing
-    #included_subjects = [1] #, 2, 3]
-    #included_subjects = [1, 2, 3, 4, 5]
+    #included_subjects = [1] #[1,2,3]
+    #included_subjects = range(1, 25)
 
     # The number of seconds to take before and after the event onset.
     # The models were evaluated using tmax = 0.5 and 3.0 (3.3 for EEGNet_LSTM)
@@ -133,17 +136,10 @@ def main():
             eeg_data_hands_vs_feet, event_id=events_hands_vs_feet_annotated)
 
         picks_hands_vs_feet = pick_types(eeg_data_hands_vs_feet.info, meg=False,
-                                         eeg=True, stim=False, eog=False, exclude="bads")
+                                         eeg=True, stim=False, eog=False,
+                                         exclude="bads")
     
-        #eeg_data_hands_vs_feet = eeg_data.copy().resample(sfreq=128)
-        
-        #duration_sec = 30
-        #for i in range(0, 64):
-        #    plt.plot(np.arange(0, duration_sec, 1.0/160.0),
-        #             eeg_data_hands_vs_feet.get_data()[i][:160 * duration_sec])
-
-        
-        if model_to_train == 'LDA':
+        if model_to_train == 'CSP_LDA':
             # apply band-pass filter, see
             # https://mne.tools/dev/auto_examples/decoding/decoding_csp_eeg.html
             eeg_data_hands_vs_feet.filter(7.0, 40.0, fir_design="firwin",
@@ -168,7 +164,7 @@ def main():
     if number_of_classes > 3 or task == TASK_LEFT_VS_RIGHT:
         eeg_data_left_vs_right = util.load_data(subjects=included_subjects,
                                                 runs=mi_left_vs_right_runs)
-        if model_to_train == 'LDA':
+        if model_to_train == 'CSP_LDA':
             # apply band-pass filter, see
             # https://mne.tools/dev/auto_examples/decoding/decoding_csp_eeg.html
             eeg_data_left_vs_right.filter(1.0, 40.0, fir_design="firwin",
@@ -224,10 +220,10 @@ def main():
         #    Cross-validation accuracy: 0.414990
         #    Classification accuracy on the test set: 0.42737
         model, X_test, Y_test = classify_wt_svm(epochs, labels)
-    elif model_to_train == 'LDA':
+    elif model_to_train == 'CSP_LDA':
         # 2 classes, hands vs feet:
         # Classification accuracy: 0.585621 / Chance level: 0.500436
-        model = classify_lda(epochs, labels)
+        model = classify_csp_lda(epochs, labels)
     elif model_to_train == 'EEGNet':
         # 0-0.5s
         # 102 subjects, task 4: Classification accuracy: 0.707317
@@ -243,7 +239,9 @@ def main():
         # Classification accuracy on the test set: 0.631155
         model, X_test, Y_test = classify_EEGNet_LSTM(epochs, labels)
     elif model_to_train == 'TRIAL':
-        model, X_test, Y_test = classify_trial_model(epochs, labels)
+        model, X_test, Y_test = find_best_model(epochs, labels)
+    elif model_to_train == 'NEW':
+        model, X_test, Y_test = classify_new_model(epochs, labels)
     else:
         raise Exception(f"Unknown model name '{model}'.")
 

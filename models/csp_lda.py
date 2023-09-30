@@ -18,7 +18,7 @@ from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
 from sklearn.model_selection import ShuffleSplit, cross_val_score
 
 
-def classify_lda(epochs, labels):
+def classify_csp_lda(epochs, labels):
     # Define a monte-carlo cross-validation generator (reduce variance):
     scores = []
     epochs_data = epochs.get_data()

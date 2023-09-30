@@ -43,8 +43,6 @@ def classify_EEGNet_LSTM(epochs, labels):
                   optimizer=Adam(learning_rate=0.01),
                   metrics=['accuracy'])
 
-    print("Number of parameters:", model.count_params())
-    
     checkpointer = ModelCheckpoint(filepath = checkpoint_file,
                                    verbose = 1, save_best_only = True)
 
@@ -95,7 +93,7 @@ def create_model(input_data_shape, number_of_classes):
     block1 = Activation('elu')(block1)
     block1 = AveragePooling2D((1, 4))(block1)
     block1 = Dropout(dropoutRate)(block1)
-    
+
     block2 = SeparableConv2D(F2, (1, 16),
                              use_bias = False, padding = 'same')(block1)
     block2 = BatchNormalization()(block2)
@@ -108,7 +106,6 @@ def create_model(input_data_shape, number_of_classes):
     l2_regularizer = regularizers.L2(0.2)
 
     reshape  = Reshape((32, -1))(block2)
-    print(reshape)
     lstm1    = LSTM(32, return_sequences=True)(reshape)
     norm1    = BatchNormalization()(lstm1)
     dropout1 = Dropout(dropoutRate)(norm1)

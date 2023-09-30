@@ -1,123 +1,117 @@
 # -*- coding: utf-8 -*-
 """
-
+  Searches for the best model hyperparameters using a Keras Tuner.
 """
 
-import random
 import numpy as np
-import pywt
-import matplotlib.pyplot as plt
+import keras_tuner as kt
 
-from sklearn.pipeline import make_pipeline
-from sklearn.model_selection import ShuffleSplit, cross_val_score, train_test_split
-from sklearn.svm import SVC
-from sklearn.preprocessing import FunctionTransformer
-
-from tensorflow.keras.callbacks import ModelCheckpoint
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Layer, Input, Dense, Activation, Dropout, \
-    Flatten, SimpleRNN, GaussianNoise
-
+from functools import partial
+from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping, TensorBoard
+        
+from models.new_model import build_trial_model
 import util
 
 
-class State(object):
-    def __init__(self, last_layer):
-        self.n_flops = 0
-        self.last_layer = last_layer
-        
+class TrialModel(kt.HyperModel):
+    def __init__(self, channels, samples, number_of_classes):
+        self.channels = channels
+        self.samples = samples
+        self.number_of_classes = number_of_classes
+        self.batch_size = None
 
-    def add_required_flops(self, n: int):
-        self.n_flops += n
+    def build(self, hp):
+        return build_trial_model(hp, self.channels, self.samples, self.number_of_classes)
+
+    def fit(self, hp, model, *args, **kwargs):
+        self.batch_size = hp.Choice("batch_size", [16, 32, 64, 128, 256])
+        return model.fit(*args, batch_size=self.batch_size, **kwargs)
 
 
-def classify_trial_model(epochs, labels):
-    checkpoint_file = f'{util.CHECKPOINT_DIR}/trial_checkpoint.h5'
-
+def find_best_model(epochs, labels):
     number_of_classes = len(np.unique(labels))
 
-    #X = epochs.get_data()
-    #X_train, X_test, Y_train, Y_test = train_test_split(X, labels, test_size=0.3)
-
+    checkpoint_file =\
+        f'{util.CHECKPOINT_DIR}/trial_model_{number_of_classes}_classes.h5'
+    
     # format: (trials, channels, samples)
     X_train, Y_train, X_validate, Y_validate, X_test, Y_test =\
-        util.split_data(epochs, labels)
+        util.split_data(epochs, labels, scale="range")
 
-    rng = random.Random(1)
+    # reshape input data to (trials, channels, samples, kernels=1)
+    input_shape = epochs.get_data().shape
+    channels, samples, kernels = input_shape[1], input_shape[2], 1
+    X_train, X_validate, X_test = util.convert_to_nhwc(
+        X_train, X_validate, X_test, channels, samples, kernels)
 
-    model = create_model((X_train.shape[1], X_train.shape[2]),
-                         number_of_classes, rng)
+    # tuner = kt.BayesianOptimization(
+    #     partial(build_trial_model, channels=channels, samples=samples,
+    #             number_of_classes=number_of_classes),
+    #     objective='val_accuracy', max_trials=50)
 
-    # do cross-validation on the train data
-#    cv = ShuffleSplit(5, test_size=0.3, random_state=1)
-#    cv.split(X_train)
-#    scores = cross_val_score(model, X_train, Y_train, cv=cv, n_jobs=None)
-#    print("Cross-validation accuracy: %f" % np.mean(scores))
+    tuner = kt.Hyperband(
+        TrialModel(channels=channels, samples=samples,
+                    number_of_classes=number_of_classes),
+        objective='val_accuracy',
+        max_epochs=200,
+        max_consecutive_failed_trials=10,
+        project_name="trial_model",
+        overwrite=True
+    )
 
-    # compile the model and set the optimizers
-    model.compile(loss='categorical_crossentropy', optimizer='adam', 
-                  metrics = ['accuracy'])
+    # tuner = kt.RandomSearch(
+    #     TrialModel(channels=channels, samples=samples,
+    #                number_of_classes=number_of_classes),
+    #     objective='val_accuracy',
+    #     max_trials=300,
+    #     max_consecutive_failed_trials=10,
+    #     project_name="trial_model",
+    #     overwrite=True
+    # )
 
-    print("Number of parameters:", model.count_params())
-    
+    tuner.search_space_summary()
+
+    tuner.search(X_train, Y_train,
+                 validation_data=(X_validate, Y_validate),
+                 callbacks=[
+                     EarlyStopping(monitor='val_loss', patience=15)]
+                 )
+
+    best_hp = tuner.get_best_hyperparameters(num_trials=1)[0]
+    print(f'>>> Best hp: {best_hp.values}, config: {best_hp.get_config()}')
+
+    model = tuner.hypermodel.build(best_hp)
+
+    class_weights = util.calc_class_weights(labels)
+
+    history = model.fit(X_train, Y_train,
+                        epochs=200,
+                        verbose=2,
+                        validation_data=(X_validate, Y_validate),
+                        class_weight=class_weights)
+
+    # history = model.fit(np.concatenate((X_train, X_validate)),
+    #                     np.concatenate((Y_train, Y_validate)),
+    #                     epochs=200,
+    #                     verbose=2,
+    #                     validation_split=0.2,
+    #                     class_weight=class_weights)
+
+    val_accuracy_history = history.history['val_accuracy']
+    best_epoch = val_accuracy_history.index(max(val_accuracy_history)) + 1
+    print(f'Best epoch: {best_epoch}')
+
     checkpointer = ModelCheckpoint(filepath = checkpoint_file,
                                    verbose = 1, save_best_only = True)
 
-    model.fit(X_train, Y_train, batch_size = 16, epochs = 150,
-              verbose = 2, validation_data = (X_validate, Y_validate),
-              callbacks=[checkpointer],
-              class_weight = util.calc_class_weights(labels))
-
-    # load optimal weights
-    model.load_weights(checkpoint_file)
+    model.fit(X_train, Y_train,
+              #batch_size=128,
+              epochs=best_epoch,
+              verbose=2,
+              validation_data=(X_validate, Y_validate),
+              callbacks=[
+                  checkpointer,
+                  TensorBoard()],
+              class_weight=util.calc_class_weights(labels))
 
     return model, X_test, Y_test
-
-
-def choose_layer(state: State, rng) -> Layer:
-    layer_types = ["Dense", "Flatten", "BatchNormalization", "SimpleRNN",
-                   "Dropout", "GaussianNoise"]
-    layer_type = rng.choice(layer_types)
-
-    layer = None
-    if layer_type == "Dense":
-        n_units = rng.randint(2, 64)
-        activation = rng.choice(["relu", "sigmoid", "tanh", "selu", "elu"])
-        layer = Dense(n_units, activation=activation)
-
-    state.nflops += 1000
-    state.last_layer = layer
-
-    return layer
-
-#
-# Flatten -> Dense(5) -> Softmax:
-# 1.3196 - val_accuracy: 0.5595 - 1s/epoch - 2ms/step
-# 144/144 [==============================] - 0s 1ms/step
-# Classification accuracy on the test set: 0.569063
-#
-def create_model(input_data_shape, number_of_classes, rng):
-    MAX_FLOPS = 10_000
-
-    model = Sequential()
-    
-    input_layer = Input(shape = input_data_shape)
-    model.add(input_layer)
-
-    state: State = State(input_layer)
-
-    while state.n_flops < MAX_FLOPS:
-        layer = choose_layer(state, rng)
-        model.add(layer)
-
-    #layer1 = Flatten()
-    dense = Dense(number_of_classes, activation="relu")
-    softmax = Activation('softmax')
-
-    model.add(dense)
-    model.add(softmax)
-
-    model.summary()
-
-    return model
-

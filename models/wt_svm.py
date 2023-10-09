@@ -28,7 +28,6 @@ def classify_wt_svm(epochs, labels):
             if out is None:
                 out = np.empty((n_samples, len(features)))
             out[s] = np.asarray(features)
-
         return out
 
     X = epochs.get_data()
@@ -41,5 +40,6 @@ def classify_wt_svm(epochs, labels):
 
     # train the model
     model = classifier.fit(X_train, Y_train)
+    print(f'Support vector count: {model[1].support_vectors_.shape[0]}')
 
     return model, X_test, Y_test

@@ -48,8 +48,8 @@ def main():
     # one of: 'WT_SVM', 'CSP_LDA', 'RNN', 'EEGNet', 'EEGNet_LSTM', 'TRIAL', 'NEW'
     #model_to_train = 'WT_SVM'
     #model_to_train = 'RNN'
-    #model_to_train = 'EEGNet'
-    model_to_train = 'EEGNet_LSTM'
+    model_to_train = 'EEGNet'
+    #model_to_train = 'EEGNet_LSTM'
     #model_to_train = 'CSP_LDA'
     #model_to_train = 'TRIAL'
     #model_to_train = 'NEW'
@@ -58,7 +58,7 @@ def main():
     # 3 classes: hands vs feet or left vs right plus rest
     # 4 classes: hands vs feet vs left vs right
     # 5 classes: hands vs feet vs left vs right plus rest
-    number_of_classes = 2
+    number_of_classes = 4
     # used when number_of_classes is 2 or 3
     task = TASK_HANDS_VS_FEET
     #task = TASK_LEFT_VS_RIGHT
@@ -103,26 +103,34 @@ def main():
 
     n_subjects = 109
 
+    # Zhang, Yao et al. (2020) and some other studies excluded the 89th subject's
+    # recording, stating that it is very different from the others.
+    #
+    # Huang, Chang et al. (2023) excluded the data of subjects 88, 89, 92, 100,
+    # 104, and 106 from the analysis, claiming that they are inconsistent.
+    #
     # Varsehi and Firoozabadi (2021) and Fan et al. (2021) claim that records
-    # of subjects 88, 92, 100 and 104 are damaged, so we excluded them from the analysis.
+    # of subjects 88, 92, 100 and 104 are damaged.
+    #
+    # Hence, we excluded the following subjects from the analysis.
     excluded_subjects = set([88, 89, 92, 100, 104, 106])
     included_subjects = [i for i in range(1, n_subjects + 1) if i not in excluded_subjects]
-    
+
     left_out_subject = rng.randint(1, len(included_subjects))
     print(f'Will leave subject {left_out_subject} out for testing')
     included_subjects.remove(left_out_subject)
-    
+
     mi_left_vs_right_runs = [4, 8, 12]  # task 2
     mi_hands_vs_feet_runs = [6, 10, 14]  # task 4
 
-    # for testing
-    #included_subjects = [1] #[1,2,3]
+    # for debugging
+    #included_subjects = [1]
     #included_subjects = range(1, 25)
 
     # The number of seconds to take before and after the event onset.
-    # The models were evaluated using tmax = 0.5 and 3.0
-    #tmin, tmax = 0.0, 0.5
-    tmin, tmax = 0.0, 3.0
+    # The models were evaluated using tmax = 0.5 and 3.0.
+    tmin, tmax = 0.0, 0.5
+    #tmin, tmax = 0.0, 3.0
 
     if number_of_classes > 3 or task == TASK_HANDS_VS_FEET:
         eeg_data_hands_vs_feet = util.load_data(subjects=included_subjects,

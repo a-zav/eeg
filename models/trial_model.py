@@ -23,12 +23,11 @@ class TrialModel(kt.HyperModel):
         self.batch_size = None
 
     def build(self, hp):
-        model = build_trial_model(hp, self.channels, self.samples, self.number_of_classes)
-        if layer_utils.count_params(model.trainable_weights) > TrialModel.MAX_PARAMETERS:
-            raise Exception("The model has too many parameters")
-        return model
+        return build_trial_model(hp, self.channels, self.samples, self.number_of_classes)
 
     def fit(self, hp, model, *args, **kwargs):
+        if layer_utils.count_params(model.trainable_weights) > TrialModel.MAX_PARAMETERS:
+            raise Exception("The model has too many parameters")
         self.batch_size = hp.Choice("batch_size", [16, 32, 64, 128, 256])
         return model.fit(*args, batch_size=self.batch_size, **kwargs)
 
@@ -53,8 +52,9 @@ def find_best_model(epochs, labels):
         TrialModel(channels=channels, samples=samples,
                     number_of_classes=number_of_classes),
         objective='val_accuracy',
-        max_epochs=200,
-        max_consecutive_failed_trials=20,
+        max_epochs=150,
+        hyperband_iterations=2,
+        max_consecutive_failed_trials=50,
         project_name="trial_model",
         overwrite=True
     )
@@ -63,9 +63,9 @@ def find_best_model(epochs, labels):
     #
     # tuner = kt.RandomSearch(
     #     TrialModel(channels=channels, samples=samples,
-    #                number_of_classes=number_of_classes),
+    #                 number_of_classes=number_of_classes),
     #     objective='val_accuracy',
-    #     max_trials=300,
+    #     max_trials=500,
     #     max_consecutive_failed_trials=20,
     #     project_name="trial_model",
     #     overwrite=True
@@ -81,13 +81,14 @@ def find_best_model(epochs, labels):
 
     best_hp = tuner.get_best_hyperparameters(num_trials=1)[0]
     print(f'>>> Best hp: {best_hp.values}, config: {best_hp.get_config()}')
+    print(f'>>> Results summary: {tuner.results_summary()}')
 
     model = tuner.hypermodel.build(best_hp)
 
     class_weights = util.calc_class_weights(labels)
 
     history = model.fit(X_train, Y_train,
-                        epochs=200,
+                        epochs=150,
                         verbose=2,
                         validation_data=(X_validate, Y_validate),
                         class_weight=class_weights)
